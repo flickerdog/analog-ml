@@ -1,9 +1,12 @@
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 from string import Template
 
 import numpy as np
+
+TIMEOUT = 10
 
 # --- PDK location: the only machine-specific part ---------------------------
 PDK_ROOT = Path.home() / ".ciel/sky130A"
@@ -66,14 +69,15 @@ def evaluate(w, l, vgs_target=0.6, vds=0.9):
     return {"id": i_t, "gm": gm_t, "gm_over_id": gm_t / i_t}
 
 def simulate(netlist, outfile):
-    """Run a netlist in a scratch folder; return the numbers ngspice wrote to `outfile`."""
+    """Run a netlist in a scratch folder; return (numbers in `outfile`, ngspice stdout)."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         (tmp / "circuit.cir").write_text(netlist)
         result = subprocess.run(
             ["ngspice", "-b", "circuit.cir"],
-            cwd=tmp, capture_output=True, text=True, timeout=120,
+            cwd=tmp, capture_output=True, text=True, timeout=10,
+            env={**os.environ, "OMP_NUM_THREADS": "1"},
         )
         if result.returncode != 0:
             raise RuntimeError(result.stdout + result.stderr)
-        return np.loadtxt(tmp / outfile)
+        return np.loadtxt(tmp / outfile), result.stdout
