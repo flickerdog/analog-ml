@@ -64,3 +64,16 @@ def evaluate(w, l, vgs_target=0.6, vds=0.9):
     i_t = np.interp(vgs_target, vgs, id_)
     gm_t = np.interp(vgs_target, vgs, gm)
     return {"id": i_t, "gm": gm_t, "gm_over_id": gm_t / i_t}
+
+def simulate(netlist, outfile):
+    """Run a netlist in a scratch folder; return the numbers ngspice wrote to `outfile`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "circuit.cir").write_text(netlist)
+        result = subprocess.run(
+            ["ngspice", "-b", "circuit.cir"],
+            cwd=tmp, capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stdout + result.stderr)
+        return np.loadtxt(tmp / outfile)
