@@ -5,3 +5,4 @@ __pycache__/
 sims/*.txt
 sims/*.png
 .idea/
+data/
