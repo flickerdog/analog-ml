@@ -1,0 +1,15 @@
+* NMOS hello world
+.lib /home/fatdog/.ciel/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vds d 0 0.9
+Vgs g 0 0
+XM1 d g 0 0 sky130_fd_pr__nfet_01v8 W=1 L=0.15
+
+.dc Vgs 0 1.8 0.05
+
+.control
+run
+wrdata id.txt i(Vds)
+quit
+.endc
+.end

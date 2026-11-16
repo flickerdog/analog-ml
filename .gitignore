@@ -1,0 +1,6 @@
+.venv/
+skywater-pdk-libs-sky130_fd_pr/
+__pycache__/
+*.pyc
+sims/*.txt
+sims/*.png
