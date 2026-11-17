@@ -2,7 +2,7 @@
 specs:
   gain_db: 35      # dB
   pm_deg: 60       # degrees
-  gbw_mhz: 10      # MHz
+  gbw_mhz: 1      # MHz
 
 # What counts as a valid operating point
 validity:

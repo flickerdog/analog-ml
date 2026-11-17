@@ -8,13 +8,16 @@ from matplotlib.patches import Patch
 
 from src.plotting import log_axis, setup_style
 from src.specs import SPECS, classify, spec_text, validity_text
+from src.specs import LOAD_CAP_PF, SPECS, classify, spec_text, validity_text
 
 setup_style()
 Path("reports").mkdir(exist_ok=True)
 
 df = pd.read_csv("data/ota5t_sobol.csv")
+df["class"] = classify(df)
 if "cl_pf" in df and abs(df["cl_pf"] - LOAD_CAP_PF).max() > 1e-9:
-    print("WARNING: data simulated with a different load cap than specs.yaml")df["itail_uA"] = df.itail * 1e6
+    print("WARNING: data simulated with a different load cap than specs.yaml")
+df["itail_uA"] = df.itail * 1e6
 df["gbw_MHz"] = df.gbw_hz / 1e6
 df["power_uW"] = df.power_w * 1e6
 df["jd_in_uA"] = df.itail_uA / 2 * df.l1 / df.w1       # Id/(W/L), input pair
