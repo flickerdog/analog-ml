@@ -16,12 +16,13 @@ optimizer are next.
 2. **Classifies** every design against the requirements in
    [`specs.yaml`](specs.yaml): *invalid* (a transistor is out of saturation, or
    the tail node has no headroom), *valid but misses a spec*, or *passes*.
-3. **Plots** where the passing designs live in the design space and writes a
-   summary table.
+3. **Plots** where the passing designs live in the design space, explores how
+   gain varies with channel length, and writes a summary table.
 4. *(next)* Trains a surrogate model on the data and uses it for optimization.
 
 ![Performance space](docs/performance_space.png)
 ![Fraction of designs passing along each design variable](docs/passrate_vs_variable.png)
+![DC gain versus minimum channel length, colored by input-pair current density](docs/gain_vs_l.png)
 
 ## The circuit and the design space
 
@@ -34,16 +35,17 @@ input grounded for AC by a huge capacitor.
 |---|---|---|
 | `w1`, `l1` | input pair width, length | 7 to 50 µm, 0.15 to 2 µm |
 | `w3`, `l3` | load pair width, length | 7 to 50 µm, 0.15 to 2 µm |
-| `itail` | tail current | 50 nA to 100 µA |
+| `itail` | tail current | 100 nA to 100 µA |
 
 Designs are drawn with a Sobol sequence (4096 points) so the space is covered
-evenly. The load capacitance is a test condition stored in `specs.yaml`
-(default 1 pF); the data file records the value it was simulated with.
+evenly. The load capacitance, performance requirements, and validity
+thresholds are configured in [`specs.yaml`](specs.yaml); the data file records
+the load capacitance used for each simulation.
 
-Default requirements (edit them in `specs.yaml`, then re-plot; no
-re-simulation needed): gain ≥ 35 dB, PM ≥ 60°, GBW ≥ 10 MHz.
-A design is *valid* if all four OTA transistors are in saturation with at
-least 50 mV of margin and the tail node stays above 150 mV.
+Edit the requirements in `specs.yaml` and re-plot to reclassify existing data;
+no re-simulation is needed. A design is *valid* if all four OTA transistors
+meet the configured saturation-margin threshold and the tail node meets its
+configured minimum voltage.
 
 ## Method notes
 
@@ -62,9 +64,8 @@ least 50 mV of margin and the tail node stays above 150 mV.
 
 - Ideal tail current source, so the tail device is not modelled.
 - Typical corner and 27 °C only: no PVT, mismatch, noise or layout parasitics.
-- At CL = 1 pF, GBW ≥ 10 MHz needs a transconductance that implies a tail
-  current of a few µA or more, so the lowest-current designs cannot meet that
-  spec at that load.
+- Lower tail currents limit achievable GBW, particularly with larger load
+  capacitance.
 
 ## Reproduce
 
@@ -89,12 +90,12 @@ python run_all.py --sweep
 
 | File | Role |
 |---|---|
-| `run_all.py` | One command for the whole pipeline: sweep, plots, table. Options: `--sweep`, `--surrogate`, `--docs` |
+| `run_all.py` | One command for the whole pipeline: sweep, plots, table. Options: `--sweep`, `--surrogate` (planned), `--docs` |
 | `specs.yaml` | Requirements, validity thresholds and test conditions |
 | `sweep_ota.py` | Simulates the design points and writes `data/ota5t_sobol.csv` |
-| `plot_results.py` | Three figures in `reports/` |
+| `plot_results.py` | Four figures in `reports/` |
 | `report_sweep.py` | HTML tables in `reports/` |
-| `train_surrogate.py` | Gaussian-process surrogate and parity plots (in progress) |
+| `train_surrogate.py` | Planned entry point for surrogate training; not implemented yet |
 | `try_ota.py` | Smoke test: simulates one design in about 0.1 s |
 | `src/ngspice_backend.py` | Model includes and the function that runs ngspice in a scratch folder |
 | `src/ota5t.py` | OTA netlist, metric extraction and `evaluate()` |
@@ -105,6 +106,7 @@ python run_all.py --sweep
 
 `data/` and `reports/` are generated and not tracked by git. The figures shown
 above are copied to `docs/` with `python run_all.py --docs`.
+Surrogate modeling and optimization are planned but not implemented yet.
 
 ## Data and licensing
 

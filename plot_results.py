@@ -8,7 +8,7 @@ from matplotlib.patches import Patch
 
 from src.plotting import log_axis, setup_style
 from src.specs import SPECS, classify, spec_text, validity_text
-from src.specs import LOAD_CAP_PF, SPECS, classify, spec_text, validity_text
+from src.specs import LOAD_CAP_PF
 
 setup_style()
 Path("reports").mkdir(exist_ok=True)
@@ -121,4 +121,25 @@ for a, (xc, yc) in zip(axs.flat, PAIRS):
 fig.suptitle(title, fontsize=12)
 fig.tight_layout(rect=(0, 0, 1, 0.93))
 fig.savefig("reports/passrate_pairs.png")
-print("saved 3 images in reports/")
+
+# ---- Image 4: DC gain versus minimum channel length ---------------------
+min_length = df[["l1", "l3"]].min(axis=1)
+input_current_density = df.itail / 2 * df.l1 / df.w1
+fig, ax = plt.subplots(figsize=(8.5, 5.5))
+points = ax.scatter(
+    min_length, df.gain_db, c=np.log10(input_current_density),
+    cmap="viridis", s=12, alpha=0.8, linewidths=0,
+)
+log_axis(ax, "x", [0.2, 0.3, 0.5, 1, 1.5, 2])
+ax.set_xlabel("Minimum channel length, min(L1, L3) (µm)")
+ax.set_ylabel("DC gain (dB)")
+ax.set_title("DC gain versus minimum channel length")
+if "gain_db" in SPECS:
+    ax.axhline(SPECS["gain_db"], color="black", ls="--", lw=1, label="gain requirement")
+    ax.legend()
+fig.colorbar(
+    points, ax=ax, label="log10 input-pair current density, Id/(W/L) (A)"
+)
+fig.tight_layout()
+fig.savefig("reports/gain_vs_l.png")
+print("saved 4 images in reports/")
