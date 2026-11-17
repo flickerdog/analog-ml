@@ -20,6 +20,8 @@ place; using the surrogate to search for better designs is next.
    gain varies with channel length, and writes a summary table.
 4. **Trains a first surrogate** to estimate nominal circuit metrics from the
    design variables, and checks its predictions on held-out sweep results.
+   The evaluation is written as an HTML report with plots and a table of
+   predicted-pass designs that failed ngspice verification.
 5. *(next)* Uses the surrogate to search for promising designs, then verifies
    those designs with ngspice.
 
@@ -94,6 +96,29 @@ python run_all.py --sweep
 python run_all.py --surrogate
 ```
 
+The surrogate command creates `reports/surrogate_report.html`, which you can
+open in a browser. It includes a metric table (average prediction errors and
+a simple baseline), plots comparing predictions with ngspice on held-out
+designs, an error plot, and a table of predicted passes that failed simulation.
+`reports/surrogate_test_predictions.csv` contains the inputs and actual and
+predicted values for every held-out design. These files are generated locally
+and are not tracked by git. The plots below are a snapshot of the current
+4,096-row sweep; rerun `python run_all.py --surrogate --docs` to refresh them
+after changing the data.
+
+In the predicted-versus-simulated plots, each dot is one test design and dots
+closer to the dashed diagonal mean more accurate predictions. GBW uses
+logarithmic axes. The error plots show `ngspice result − prediction`; zero
+means no error. MAE is the average absolute error, RMSE emphasizes larger
+errors, and R² compares the model with a mean-only prediction. The
+classification table is important for design search: a predicted pass is
+only a candidate, and must still be checked with ngspice. This first model
+uses nominal sweep data only; it cannot estimate Monte Carlo variation or 3σ
+input offset.
+
+![Surrogate predictions compared with ngspice on held-out designs](docs/surrogate_actual_vs_predicted.png)
+![Surrogate prediction errors on held-out designs](docs/surrogate_prediction_errors.png)
+
 ## Scripts
 
 | File | Role |
@@ -103,7 +128,7 @@ python run_all.py --surrogate
 | `sweep_ota.py` | Simulates the design points and writes `data/ota5t_sobol.csv` |
 | `plot_results.py` | Four figures in `reports/` |
 | `report_sweep.py` | HTML tables in `reports/` |
-| `train_surrogate.py` | Trains and evaluates nominal metric models; writes metrics to `reports/` and a model to `data/` |
+| `train_surrogate.py` | Trains and evaluates nominal metric models; writes an HTML report and plots to `reports/`, and a model to `data/` |
 | `try_ota.py` | Smoke test: simulates one design in about 0.1 s |
 | `src/ngspice_backend.py` | Model includes and the function that runs ngspice in a scratch folder |
 | `src/ota5t.py` | OTA netlist, metric extraction and `evaluate()` |
