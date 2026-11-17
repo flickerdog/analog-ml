@@ -136,6 +136,42 @@ input offset.
 ![Surrogate predictions compared with ngspice on held-out designs](docs/surrogate_actual_vs_predicted.png)
 ![Surrogate prediction errors on held-out designs](docs/surrogate_prediction_errors.png)
 
+### Benchmarking the saved model
+
+The training report's held-out results use simulations already in the sweep
+CSV. To benchmark the already-trained model on new configurations instead,
+run only:
+
+```bash
+source .venv/bin/activate
+python3 benchmark_surrogate.py
+```
+
+This does not run a sweep or train a model. `benchmark_surrogate.py` loads the
+existing `data/ota5t_surrogate.joblib` model and `data/ota5t_sobol.csv` training
+data, samples 100 new log-uniform transistor configurations within the sweep
+ranges, excludes configurations found in the training CSV, runs ngspice
+through `src/ota5t.py`, and asks the saved model to predict gain, GBW, and
+phase margin for each one. The training CSV is read only to avoid benchmarking
+on designs the model has already seen.
+
+The benchmark writes three files to `reports/`:
+
+| File | Contents |
+|---|---|
+| `surrogate_benchmark.html` | Browser-friendly summary, accuracy tables, and per-design actual/predicted values, errors, and timings |
+| `surrogate_benchmark.csv` | Machine-readable per-design results |
+| `surrogate_benchmark_summary.json` | Aggregate errors, run counts, and timing/speedup figures |
+
+Open `reports/surrogate_benchmark.html` in a browser to inspect the results.
+Model loading is timed separately and excluded from speedup; timing reports
+cover both single-design predictions and batched throughput. Use `--n` to
+change the number of configurations and `--seed` to reproduce a sample. The
+saved model must have been trained from the sweep CSV supplied by
+`--training-data` (the default). The sweep and training commands documented
+under [Reproduce](#reproduce) are only needed if those input files do not
+already exist or you intentionally want to regenerate the model.
+
 ### Surrogate training flow
 
 ```mermaid
@@ -169,6 +205,7 @@ changed with `--test-size` and `--trees` when running
 | `plot_results.py` | Four figures in `reports/` |
 | `report_sweep.py` | HTML tables in `reports/` |
 | `train_surrogate.py` | Trains and evaluates nominal metric models; writes an HTML report and plots to `reports/`, and a model to `data/` |
+| `benchmark_surrogate.py` | Compares the saved model with fresh ngspice runs on new designs; writes HTML, CSV, and JSON reports |
 | `try_ota.py` | Smoke test: simulates one design in about 0.1 s |
 | `src/ngspice_backend.py` | Model includes and the function that runs ngspice in a scratch folder |
 | `src/ota5t.py` | OTA netlist, metric extraction and `evaluate()` |
