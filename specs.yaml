@@ -1,0 +1,14 @@
+# Minimum requirements for a design to pass
+specs:
+  gain_db: 35      # dB
+  pm_deg: 60       # degrees
+  gbw_mhz: 10      # MHz
+
+# What counts as a valid operating point
+validity:
+  sat_margin_min_mv: 50    # every OTA transistor: |Vds| - |Vdsat| above this
+  v_tail_min_mv: 150       # tail node must stay above this
+  
+  # Test conditions the specs refer to
+conditions:
+  load_cap_pf: 1.0     # load capacitance at the OTA output
