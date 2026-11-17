@@ -6,8 +6,8 @@ Machine-learning-assisted sizing of analog circuits, using only open-source tool
 
 The goal is to find out how far surrogate models and optimizers can go on real
 analog design problems, starting with a deliberately simple circuit.
-**Work in progress:** the data pipeline works; the surrogate model and the
-optimizer are next.
+**Work in progress:** the data pipeline and first nominal surrogate are in
+place; using the surrogate to search for better designs is next.
 
 ## What it does
 
@@ -18,7 +18,10 @@ optimizer are next.
    the tail node has no headroom), *valid but misses a spec*, or *passes*.
 3. **Plots** where the passing designs live in the design space, explores how
    gain varies with channel length, and writes a summary table.
-4. *(next)* Trains a surrogate model on the data and uses it for optimization.
+4. **Trains a first surrogate** to estimate nominal circuit metrics from the
+   design variables, and checks its predictions on held-out sweep results.
+5. *(next)* Uses the surrogate to search for promising designs, then verifies
+   those designs with ngspice.
 
 ![Performance space](docs/performance_space.png)
 ![Fraction of designs passing along each design variable](docs/passrate_vs_variable.png)
@@ -64,6 +67,8 @@ configured minimum voltage.
 
 - Ideal tail current source, so the tail device is not modelled.
 - Typical corner and 27 °C only: no PVT, mismatch, noise or layout parasitics.
+- The current sweep is nominal and does not model Monte Carlo variation or
+  input offset; the surrogate trained from it cannot estimate offset.
 - Lower tail currents limit achievable GBW, particularly with larger load
   capacitance.
 
@@ -84,18 +89,21 @@ ciel enable --pdk-family=sky130 <hash>        # version used for the results: <h
 
 # Simulate, plot, write the table
 python run_all.py --sweep
+
+# Train and evaluate the surrogate using the saved sweep data
+python run_all.py --surrogate
 ```
 
 ## Scripts
 
 | File | Role |
 |---|---|
-| `run_all.py` | One command for the whole pipeline: sweep, plots, table. Options: `--sweep`, `--surrogate` (planned), `--docs` |
+| `run_all.py` | One command for the whole pipeline: sweep, plots, table. Options: `--sweep`, `--surrogate`, `--docs` |
 | `specs.yaml` | Requirements, validity thresholds and test conditions |
 | `sweep_ota.py` | Simulates the design points and writes `data/ota5t_sobol.csv` |
 | `plot_results.py` | Four figures in `reports/` |
 | `report_sweep.py` | HTML tables in `reports/` |
-| `train_surrogate.py` | Planned entry point for surrogate training; not implemented yet |
+| `train_surrogate.py` | Trains and evaluates nominal metric models; writes metrics to `reports/` and a model to `data/` |
 | `try_ota.py` | Smoke test: simulates one design in about 0.1 s |
 | `src/ngspice_backend.py` | Model includes and the function that runs ngspice in a scratch folder |
 | `src/ota5t.py` | OTA netlist, metric extraction and `evaluate()` |
@@ -106,7 +114,8 @@ python run_all.py --sweep
 
 `data/` and `reports/` are generated and not tracked by git. The figures shown
 above are copied to `docs/` with `python run_all.py --docs`.
-Surrogate modeling and optimization are planned but not implemented yet.
+Surrogate training is implemented; using it to optimize designs is still
+planned.
 
 ## Data and licensing
 

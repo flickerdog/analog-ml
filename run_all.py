@@ -2,7 +2,7 @@
 
     python run_all.py              # re-plot and rebuild the table from the existing data (fast)
     python run_all.py --sweep      # re-simulate first (about 8 min), then plot and report
-    python run_all.py --surrogate  # train the surrogate (planned; not implemented yet)
+    python run_all.py --surrogate  # train and evaluate the surrogate
     python run_all.py --docs       # also copy the figures to docs/ (for the README)
 
 If data/ota5t_sobol.csv does not exist yet, the sweep runs automatically.
@@ -26,7 +26,7 @@ parser.add_argument("--docs", action="store_true", help="copy the figures to doc
 args = parser.parse_args()
 
 if args.surrogate and not (ROOT / "train_surrogate.py").exists():
-    parser.error("surrogate training is planned but train_surrogate.py is not implemented yet")
+    parser.error("cannot train surrogate: train_surrogate.py was not found")
 
 if not DATA.exists() and not args.sweep:
     print(f"{DATA.relative_to(ROOT)} not found: running the sweep first.")
