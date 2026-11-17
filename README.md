@@ -136,6 +136,29 @@ input offset.
 ![Surrogate predictions compared with ngspice on held-out designs](docs/surrogate_actual_vs_predicted.png)
 ![Surrogate prediction errors on held-out designs](docs/surrogate_prediction_errors.png)
 
+### Surrogate training flow
+
+```mermaid
+flowchart LR
+    A["Sweep inputs<br/>w1, l1, w3, l3, itail"] --> B["ngspice<br/>simulated metrics"]
+    B --> C["Saved sweep CSV"]
+    A --> C
+    C --> D["Log-transform inputs<br/>and split 80% / 20%"]
+    D --> E["Train five random-forest<br/>regressors on 80%"]
+    E --> F["Predict the held-out 20%"]
+    F --> G["Compare with ngspice<br/>metrics and spec results"]
+    G --> H["HTML report, plots,<br/>and prediction CSV"]
+    C --> I["Refit five models<br/>on all available rows"]
+    I --> J["Saved model for<br/>later design search"]
+```
+
+In the diagram, the held-out 20% (the default) is used only to evaluate
+predictions, not to fit those evaluated models. The final saved model is then
+retrained using the full dataset. At present, the saved model is not yet
+connected to an optimizer. The test fraction and number of trees can be
+changed with `--test-size` and `--trees` when running
+`python train_surrogate.py --help`.
+
 ### Benchmarking the saved model
 
 The training report's held-out results use simulations already in the sweep
@@ -171,29 +194,6 @@ saved model must have been trained from the sweep CSV supplied by
 `--training-data` (the default). The sweep and training commands documented
 under [Reproduce](#reproduce) are only needed if those input files do not
 already exist or you intentionally want to regenerate the model.
-
-### Surrogate training flow
-
-```mermaid
-flowchart LR
-    A["Sweep inputs<br/>w1, l1, w3, l3, itail"] --> B["ngspice<br/>simulated metrics"]
-    B --> C["Saved sweep CSV"]
-    A --> C
-    C --> D["Log-transform inputs<br/>and split 80% / 20%"]
-    D --> E["Train five random-forest<br/>regressors on 80%"]
-    E --> F["Predict the held-out 20%"]
-    F --> G["Compare with ngspice<br/>metrics and spec results"]
-    G --> H["HTML report, plots,<br/>and prediction CSV"]
-    C --> I["Refit five models<br/>on all available rows"]
-    I --> J["Saved model for<br/>later design search"]
-```
-
-In the diagram, the held-out 20% (the default) is used only to evaluate
-predictions, not to fit those evaluated models. The final saved model is then
-retrained using the full dataset. At present, the saved model is not yet
-connected to an optimizer. The test fraction and number of trees can be
-changed with `--test-size` and `--trees` when running
-`python train_surrogate.py --help`.
 
 ## Scripts
 
