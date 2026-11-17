@@ -54,6 +54,23 @@ configured minimum voltage.
 
 ## Method notes
 
+- **What the surrogate learns.** `train_surrogate.py` uses scikit-learn's
+  `RandomForestRegressor`. It trains one model for each of five simulated
+  outputs: gain, GBW, phase margin, saturation margin, and tail voltage. Power
+  is calculated directly from the tail current, so it does not need a model.
+- **How a random forest works.** Each decision tree learns simple split rules
+  on the five inputs and predicts by averaging the training results in the
+  matching leaf (the final region reached by those rules). By default, the
+  forest averages 300 trees to make predictions less sensitive to any one
+  tree. The inputs are converted to `log10` because the sweep varies them over
+  multiplicative ranges; GBW is also learned in `log10` space.
+- **How it is evaluated.** By default, the script holds out 20% of the sweep,
+  trains on the other 80%, and compares predictions with ngspice results for
+  those unseen rows. It reports mean absolute error (MAE), root mean squared
+  error (RMSE), and R², alongside a simple mean-only prediction baseline.
+  After this check, it trains a final model on all rows for later use. A random
+  holdout measures performance within this sweep; it does not guarantee
+  accuracy in new regions or near every spec boundary.
 - **Trimmed model files.** Loading the full SKY130 typical corner makes ngspice
   parse about 30 device families and takes roughly 50 s per run. This project
   includes only the 1.8 V NMOS and PMOS models, which takes about 0.1 s per
@@ -118,6 +135,29 @@ input offset.
 
 ![Surrogate predictions compared with ngspice on held-out designs](docs/surrogate_actual_vs_predicted.png)
 ![Surrogate prediction errors on held-out designs](docs/surrogate_prediction_errors.png)
+
+### Surrogate training flow
+
+```mermaid
+flowchart LR
+    A["Sweep inputs<br/>w1, l1, w3, l3, itail"] --> B["ngspice<br/>simulated metrics"]
+    B --> C["Saved sweep CSV"]
+    A --> C
+    C --> D["Log-transform inputs<br/>and split 80% / 20%"]
+    D --> E["Train five random-forest<br/>regressors on 80%"]
+    E --> F["Predict the held-out 20%"]
+    F --> G["Compare with ngspice<br/>metrics and spec results"]
+    G --> H["HTML report, plots,<br/>and prediction CSV"]
+    C --> I["Refit five models<br/>on all available rows"]
+    I --> J["Saved model for<br/>later design search"]
+```
+
+In the diagram, the held-out 20% (the default) is used only to evaluate
+predictions, not to fit those evaluated models. The final saved model is then
+retrained using the full dataset. At present, the saved model is not yet
+connected to an optimizer. The test fraction and number of trees can be
+changed with `--test-size` and `--trees` when running
+`python train_surrogate.py --help`.
 
 ## Scripts
 

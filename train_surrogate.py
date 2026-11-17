@@ -231,6 +231,15 @@ th{{background:#f2f2f2}}img{{max-width:100%;height:auto}}.note{{background:#f6f8
 <p>Data: <code>{escape(str(args.data))}</code>. Complete rows: {len(data)}.
 Training rows: {len(train_idx)}. Test rows not used for fitting: {len(test_idx)}.
 Seed: {args.seed}.</p>
+<h2>Training method</h2>
+<p>This script uses scikit-learn's <code>RandomForestRegressor</code>: five
+separate regressors predict gain, GBW, phase margin, saturation margin, and
+tail voltage. Each forest averages {args.trees} decision trees. Tree leaves
+predict from training examples in that region of input space. The five design
+inputs are transformed with <code>log10</code>; GBW targets are also trained
+in <code>log10</code> space. The held-out split evaluates models trained on
+{len(train_idx)} rows. After evaluation, those models are independently
+refit on all {len(data)} complete rows and saved for future use.</p>
 <div class="note"><strong>How to read this:</strong> these plots compare model
 predictions with ngspice results for designs withheld during training. Points
 near the dashed diagonal are accurate. This tests nominal circuit metrics only;
