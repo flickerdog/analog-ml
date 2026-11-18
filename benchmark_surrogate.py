@@ -20,11 +20,12 @@ import pandas as pd
 from scipy.stats import qmc
 
 from src.ota5t import evaluate
-from src.specs import LOAD_CAP
+from src.specs import LOAD_CAP, SAT_MARGIN, V_TAIL_MIN
 from sweep_ota import RANGES
 
 ROOT = Path(__file__).resolve().parent
 METRICS = ("gain_db", "gbw_hz", "pm_deg")
+PREDICTION_TARGETS = (*METRICS, "sat_margin", "v_tail")
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--model", type=Path, default=ROOT / "data/ota5t_surrogate.joblib")
@@ -74,8 +75,11 @@ if saved.get("features") != features:
     )
 if saved.get("input_transform") != "log10":
     parser.error("benchmark expects a model trained with log10 input transformation")
-if any(name not in saved.get("models", {}) for name in METRICS):
-    parser.error(f"model must contain regressors for: {', '.join(METRICS)}")
+if any(name not in saved.get("models", {}) for name in PREDICTION_TARGETS):
+    parser.error(
+        "model must contain regressors for: "
+        + ", ".join(PREDICTION_TARGETS)
+    )
 
 
 def sample_fresh_designs(n, seed):
@@ -114,7 +118,7 @@ saved_targets = saved.get("targets", {})
 def predict_one(values):
     x = np.log10(np.asarray(values, dtype=float).reshape(1, -1))
     result = {}
-    for metric in METRICS:
+    for metric in PREDICTION_TARGETS:
         encoded = float(saved["models"][metric].predict(x)[0])
         transform = saved_targets.get(metric, (None, None, "linear"))[2]
         result[metric] = 10**encoded if transform == "log10" else encoded
@@ -124,7 +128,7 @@ def predict_one(values):
 def predict_batch(values):
     x = np.log10(np.asarray(values, dtype=float))
     result = {}
-    for metric in METRICS:
+    for metric in PREDICTION_TARGETS:
         encoded = saved["models"][metric].predict(x)
         transform = saved_targets.get(metric, (None, None, "linear"))[2]
         result[metric] = 10**encoded if transform == "log10" else encoded
@@ -152,6 +156,15 @@ for index, (_, design) in enumerate(designs.iterrows(), start=1):
     record = {
         "design_id": index,
         **params,
+        "ngspice_valid": actual.get("valid", np.nan),
+        "surrogate_valid": bool(
+            predicted["sat_margin"] > SAT_MARGIN
+            and predicted["v_tail"] > V_TAIL_MIN
+        ),
+        "sat_margin_spice": actual.get("sat_margin", np.nan),
+        "sat_margin_surrogate": predicted["sat_margin"],
+        "v_tail_spice": actual.get("v_tail", np.nan),
+        "v_tail_surrogate": predicted["v_tail"],
         "spice_time_s": spice_time_s,
         "surrogate_time_s": surrogate_time_s,
         "spice_error": spice_error,
@@ -161,7 +174,9 @@ for index, (_, design) in enumerate(designs.iterrows(), start=1):
         predicted_value = predicted[metric]
         error_pct = (
             abs(actual_value - predicted_value) / abs(actual_value) * 100
-            if np.isfinite(actual_value) and actual_value != 0
+            if actual.get("valid", False)
+            and np.isfinite(actual_value)
+            and actual_value != 0
             else np.nan
         )
         record[f"{metric}_spice"] = actual_value
@@ -175,7 +190,7 @@ results = pd.DataFrame(records)
 batch_started = time.perf_counter()
 batch_predictions = predict_batch(designs[features].to_numpy())
 batch_time_s = time.perf_counter() - batch_started
-for metric in METRICS:
+for metric in PREDICTION_TARGETS:
     if not np.allclose(
         results[f"{metric}_surrogate"],
         batch_predictions[metric],
@@ -188,34 +203,79 @@ args.output.parent.mkdir(parents=True, exist_ok=True)
 results.to_csv(args.output, index=False)
 
 successful = results[results["spice_error"] == ""]
-spice_total_s = float(successful["spice_time_s"].sum())
-surrogate_total_s = float(results["surrogate_time_s"].sum())
+valid_designs = successful[successful["ngspice_valid"]]
+invalid_designs = successful[~successful["ngspice_valid"]]
+spice_total_s = float(valid_designs["spice_time_s"].sum())
+surrogate_total_s = float(valid_designs["surrogate_time_s"].sum())
+valid_batch_started = time.perf_counter()
+if len(valid_designs):
+    valid_batch_predictions = predict_batch(valid_designs[features].to_numpy())
+    valid_batch_time_s = time.perf_counter() - valid_batch_started
+    for metric in PREDICTION_TARGETS:
+        if not np.allclose(
+            valid_designs[f"{metric}_surrogate"],
+            valid_batch_predictions[metric],
+            rtol=1e-10,
+            atol=1e-12,
+        ):
+            raise RuntimeError(
+                f"batched predictions differ from single-design predictions "
+                f"for valid designs and {metric}"
+            )
+else:
+    valid_batch_predictions = {metric: np.array([]) for metric in PREDICTION_TARGETS}
+    valid_batch_time_s = 0.0
+predicted_valid = successful["surrogate_valid"]
+actual_valid = successful["ngspice_valid"]
+true_valid = int((actual_valid & predicted_valid).sum())
+false_invalid = int((actual_valid & ~predicted_valid).sum())
+false_valid = int((~actual_valid & predicted_valid).sum())
+true_invalid = int((~actual_valid & ~predicted_valid).sum())
 summary = {
     "requested_designs": args.n,
     "successful_ngspice_runs": len(successful),
     "failed_ngspice_runs": len(results) - len(successful),
+    "valid_designs": len(valid_designs),
+    "invalid_designs": len(invalid_designs),
     "seed": args.seed,
     "load_capacitance_f": LOAD_CAP,
     "model": str(args.model),
     "model_load_time_s": model_load_s,
     "ngspice_total_time_s": spice_total_s,
     "surrogate_single_prediction_total_time_s": surrogate_total_s,
-    "surrogate_batch_prediction_total_time_s": batch_time_s,
-    "ngspice_mean_time_s": spice_total_s / len(successful) if len(successful) else None,
-    "surrogate_single_mean_time_s": surrogate_total_s / len(results) if len(results) else None,
-    "surrogate_batch_mean_time_s_per_design": batch_time_s / args.n,
+    "surrogate_batch_prediction_total_time_s": valid_batch_time_s,
+    "ngspice_mean_time_s": spice_total_s / len(valid_designs) if len(valid_designs) else None,
+    "surrogate_single_mean_time_s": surrogate_total_s / len(valid_designs) if len(valid_designs) else None,
+    "surrogate_batch_mean_time_s_per_design": (
+        valid_batch_time_s / len(valid_designs) if len(valid_designs) else None
+    ),
     "single_design_speedup_excluding_model_load": (
         spice_total_s / surrogate_total_s if surrogate_total_s > 0 else None
     ),
     "batch_throughput_speedup_excluding_model_load": (
-        spice_total_s / batch_time_s if batch_time_s > 0 else None
+        spice_total_s / valid_batch_time_s if valid_batch_time_s > 0 else None
     ),
+    "validity_classification": {
+        "true_valid": true_valid,
+        "valid_flagged_invalid": false_invalid,
+        "invalid_flagged_valid": false_valid,
+        "true_invalid": true_invalid,
+        "valid_precision": (
+            true_valid / (true_valid + false_valid) if true_valid + false_valid else None
+        ),
+        "valid_recall": (
+            true_valid / (true_valid + false_invalid) if true_valid + false_invalid else None
+        ),
+        "invalid_recall": (
+            true_invalid / (true_invalid + false_valid) if true_invalid + false_valid else None
+        ),
+    },
     "metrics": {},
 }
 for metric in METRICS:
-    errors = successful[f"{metric}_error_pct"].dropna()
-    actual = successful[f"{metric}_spice"]
-    predicted = successful[f"{metric}_surrogate"]
+    errors = valid_designs[f"{metric}_error_pct"].dropna()
+    actual = valid_designs[f"{metric}_spice"]
+    predicted = valid_designs[f"{metric}_surrogate"]
     finite = np.isfinite(actual) & np.isfinite(predicted)
     summary["metrics"][metric] = {
         "valid_comparisons": int(errors.size),
@@ -242,16 +302,27 @@ overview = pd.DataFrame([
     {"measure": "Requested designs", "value": summary["requested_designs"]},
     {"measure": "Successful ngspice runs", "value": summary["successful_ngspice_runs"]},
     {"measure": "Failed ngspice runs", "value": summary["failed_ngspice_runs"]},
+    {"measure": "Valid designs (used for accuracy)", "value": summary["valid_designs"]},
+    {"measure": "Invalid designs (excluded from accuracy)", "value": summary["invalid_designs"]},
     {"measure": "Seed", "value": summary["seed"]},
     {"measure": "Model load time (s, excluded from speedup)", "value": model_load_s},
-    {"measure": "ngspice total time (s)", "value": spice_total_s},
-    {"measure": "Surrogate single-prediction total (s)", "value": surrogate_total_s},
-    {"measure": "Surrogate batch-prediction total (s)", "value": batch_time_s},
+    {"measure": "Valid-design ngspice total time (s)", "value": spice_total_s},
+    {"measure": "Valid-design surrogate single-prediction total (s)", "value": surrogate_total_s},
+    {"measure": "Valid-design surrogate batch-prediction total (s)", "value": valid_batch_time_s},
     {"measure": "Single-design speedup", "value": summary["single_design_speedup_excluding_model_load"]},
     {"measure": "Batch throughput speedup", "value": summary["batch_throughput_speedup_excluding_model_load"]},
 ])
+validity_summary = pd.DataFrame([
+    {"measure": "Actual valid; predicted valid", "count": true_valid},
+    {"measure": "Actual valid; predicted invalid", "count": false_invalid},
+    {"measure": "Actual invalid; predicted valid", "count": false_valid},
+    {"measure": "Actual invalid; predicted invalid", "count": true_invalid},
+])
 detail_columns = [
     "design_id", *features,
+    "ngspice_valid", "surrogate_valid",
+    "sat_margin_spice", "sat_margin_surrogate",
+    "v_tail_spice", "v_tail_surrogate",
     *[
         column
         for metric in METRICS
@@ -297,10 +368,18 @@ training data excluded during sampling: <code>{escape(str(args.training_data))}<
 <h2>Run summary</h2>
 {html_table(overview)}
 <h2>Prediction accuracy</h2>
+<p>Accuracy statistics below use only designs ngspice marked valid
+(saturation margin &gt; {SAT_MARGIN * 1e3:g} mV and tail voltage &gt; {V_TAIL_MIN * 1e3:g} mV).
+Invalid designs remain listed below with validity flags, but their metric errors are excluded.</p>
 {html_table(metric_summary)}
+<h2>Validity flag performance</h2>
+<p>The surrogate estimates saturation margin and tail voltage, then applies
+the same validity thresholds as ngspice.</p>
+{html_table(validity_summary)}
 <h2>Per-design results</h2>
-<p>Error percentage is absolute error divided by the ngspice result. A blank
-ngspice value indicates a failed simulation; its error is shown in the last column.</p>
+<p>Error percentage is absolute error divided by the ngspice result and is
+shown only for valid designs. Invalid designs are flagged; failed simulations
+have no ngspice validity result.</p>
 {html_table(results[detail_columns])}
 </body>
 </html>
@@ -309,15 +388,20 @@ args.html.write_text(html_report, encoding="utf-8")
 print(f"Per-design results: {args.output}")
 print(f"Summary:            {args.summary}")
 print(f"HTML report:        {args.html}")
-print(f"Model load time:    {model_load_s:.6g} s (excluded from speedup)")
 print(
-    "Single-design speedup: "
-    f"{summary['single_design_speedup_excluding_model_load']:.3g}x"
+    f"Accuracy/timing sample: {len(valid_designs)} valid, "
+    f"{len(invalid_designs)} invalid, {len(results) - len(successful)} failed"
 )
+print(f"Model load time:    {model_load_s:.6g} s (excluded from speedup)")
+single_speedup = summary["single_design_speedup_excluding_model_load"]
+batch_speedup = summary["batch_throughput_speedup_excluding_model_load"]
+print(f"Single-design speedup: {single_speedup:.3g}x" if single_speedup is not None
+      else "Single-design speedup: unavailable (no valid designs)")
 print(
-    "Batch throughput speedup: "
-    f"{summary['batch_throughput_speedup_excluding_model_load']:.3g}x "
-    f"({batch_time_s:.6g} s for {args.n} predictions)"
+    f"Batch throughput speedup: {batch_speedup:.3g}x "
+    f"({valid_batch_time_s:.6g} s for {len(valid_designs)} valid predictions)"
+    if batch_speedup is not None
+    else "Batch throughput speedup: unavailable (no valid designs)"
 )
 for metric, values in summary["metrics"].items():
     mape = values["mean_absolute_percentage_error"]
