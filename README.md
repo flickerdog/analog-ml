@@ -219,6 +219,43 @@ random-forest model is not retrained or replaced. GP is retained as a useful
 comparison because its uncertainty-aware expected-improvement acquisition
 works differently from ranking designs by the saved model's predictions.
 
+### Optimization flow
+
+```mermaid
+flowchart LR
+    A["Saved sweep CSV"] --> B["Choose shared initial sample<br/>using the run seed"]
+    B --> C["Same starting observations<br/>and ngspice budget"]
+
+    subgraph RF["Saved-surrogate search"]
+        D["Saved random-forest model"] --> E["Score unseen candidates<br/>for objective and constraints"]
+        E --> F["Select next ranked candidate"]
+        F --> G["Evaluate candidate<br/>with ngspice"]
+        G --> H["Record result and<br/>check feasibility"]
+        H --> F
+    end
+
+    subgraph GP["Gaussian-process Bayesian optimization"]
+        I["Fit GP models to<br/>known observations"] --> J["Acquisition selects<br/>next candidate"]
+        J --> K["Evaluate candidate<br/>with ngspice"]
+        K --> L["Add result to observations"]
+        L --> I
+    end
+
+    C --> I
+    C --> F
+    C --> M["Compare best feasible<br/>ngspice-verified designs"]
+    H --> M
+    L --> M
+    M --> N["HTML report, timing,<br/>CSV, and plots"]
+```
+
+Both searches start from the same seeded sample and receive the same number
+of new ngspice evaluations. The saved-surrogate search ranks a fixed pool of
+unseen candidates; Bayesian optimization updates its Gaussian processes after
+each simulation. Both methods' reported best designs are verified against
+ngspice, and the report separates search-computation time from simulation
+time.
+
 Choose and edit objectives and constraints in
 [`optimization_scenarios.yaml`](optimization_scenarios.yaml), then run:
 
