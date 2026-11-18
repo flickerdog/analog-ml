@@ -150,12 +150,20 @@ flowchart LR
     G --> H["HTML report, plots,<br/>and prediction CSV"]
     C --> I["Refit five models<br/>on all available rows"]
     I --> J["Saved model for<br/>later design search"]
+    C --> K["Initialize BO Gaussian<br/>processes from sweep data"]
+    K --> L["Acquisition proposes<br/>candidate designs"]
+    L --> M["Evaluate candidate<br/>with ngspice"]
+    M --> K
+    J --> N["Rank candidate designs<br/>with saved surrogate"]
+    N --> O["Evaluate candidates<br/>with ngspice"]
 ```
 
 In the diagram, the held-out 20% (the default) is used only to evaluate
 predictions, not to fit those evaluated models. The final saved model is then
-retrained using the full dataset. At present, the saved model is not yet
-connected to an optimizer. The test fraction and number of trees can be
+retrained using the full dataset. Bayesian optimization is a separate
+Gaussian-process model initialized from known sweep simulations; it adds each
+new ngspice result as an observation. It does not retrain or overwrite the
+saved random-forest model. The test fraction and number of trees can be
 changed with `--test-size` and `--trees` when running
 `python train_surrogate.py --help`.
 
@@ -182,18 +190,64 @@ The benchmark writes three files to `reports/`:
 
 | File | Contents |
 |---|---|
-| `surrogate_benchmark.html` | Browser-friendly summary, accuracy tables, and per-design actual/predicted values, errors, and timings |
+| `surrogate_benchmark.html` | Browser-friendly summary, valid-only accuracy, validity-flag results, and per-design comparisons |
 | `surrogate_benchmark.csv` | Machine-readable per-design results |
 | `surrogate_benchmark_summary.json` | Aggregate errors, run counts, and timing/speedup figures |
 
 Open `reports/surrogate_benchmark.html` in a browser to inspect the results.
-Model loading is timed separately and excluded from speedup; timing reports
-cover both single-design predictions and batched throughput. Use `--n` to
-change the number of configurations and `--seed` to reproduce a sample. The
-saved model must have been trained from the sweep CSV supplied by
-`--training-data` (the default). The sweep and training commands documented
-under [Reproduce](#reproduce) are only needed if those input files do not
-already exist or you intentionally want to regenerate the model.
+ngspice marks a design valid only when both transistor saturation margin and
+tail voltage pass the configured thresholds. Accuracy errors and speed
+comparisons are reported only for those valid designs. Invalid designs remain
+in the per-design report with both ngspice and surrogate validity flags; their
+gain, GBW, and phase-margin errors are left blank. The report also shows how
+well the surrogate predicts validity. Model loading is timed separately and
+excluded from speedup. Use `--n` to change the number of configurations and
+`--seed` to reproduce a sample. The saved model must have been trained from
+the sweep CSV supplied by `--training-data` (the default). The sweep and
+training commands documented under [Reproduce](#reproduce) are only needed if
+those input files do not already exist or you intentionally want to
+regenerate the model.
+
+### Optimizing designs with Bayesian optimization
+
+`optimize_ota.py` compares two constrained searches with the same initial
+sweep observations and ngspice evaluation budget: a search ranked by your
+saved random-forest surrogate, and GP Bayesian optimization. The saved model
+scores a large set of unseen candidates; GP BO fits Gaussian processes to the
+sweep observations and updates them with each new ngspice result. The saved
+random-forest model is not retrained or replaced. GP is retained as a useful
+comparison because its uncertainty-aware expected-improvement acquisition
+works differently from ranking designs by the saved model's predictions.
+
+Choose and edit objectives and constraints in
+[`optimization_scenarios.yaml`](optimization_scenarios.yaml), then run:
+
+```bash
+source .venv/bin/activate
+python3 optimize_ota.py --scenario minimize_power
+```
+
+The supplied scenarios minimize power while meeting the current specs,
+maximize GBW while meeting gain/phase-margin/validity requirements, and
+minimize power with a higher GBW target. To explore a power–GBW Pareto
+trade-off, add power-minimization scenarios with different minimum GBW values
+and compare their best feasible designs. Constraints in the YAML use the same
+units as the sweep CSV: Hz for GBW, volts for saturation margin and tail
+voltage, and watts for power. Feasibility and the reported best designs are
+always checked against ngspice results, not just BO predictions.
+
+By default each method receives 200 new ngspice evaluations after sharing 128
+existing sweep observations. Change the budget or seed with `--iterations`
+and `--seed`; `--help` lists all options. A seed determines the random initial
+sweep subset and candidate sampling, so different seeds test whether results
+depend on those choices. The script writes per-evaluation CSV, a JSON summary,
+an HTML comparison, design-space plots, and an optimization-progress plot
+under `reports/`. The report separates optimization computation from
+ngspice evaluation time. In the plots, green means all scenario constraints
+passed in ngspice and red means at least one failed. The comparison displays
+power in µW, GBW in MHz, and voltage margins in mV; CSV and JSON retain the
+original units. Multiple seeds provide a useful robustness check but are not a
+statistical guarantee.
 
 ## Scripts
 
@@ -206,6 +260,8 @@ already exist or you intentionally want to regenerate the model.
 | `report_sweep.py` | HTML tables in `reports/` |
 | `train_surrogate.py` | Trains and evaluates nominal metric models; writes an HTML report and plots to `reports/`, and a model to `data/` |
 | `benchmark_surrogate.py` | Compares the saved model with fresh ngspice runs on new designs; writes HTML, CSV, and JSON reports |
+| `optimization_scenarios.yaml` | Configurable objectives and constraints for design optimization |
+| `optimize_ota.py` | Compares saved-surrogate-guided optimization with same-budget GP Bayesian optimization and ngspice verification |
 | `try_ota.py` | Smoke test: simulates one design in about 0.1 s |
 | `src/ngspice_backend.py` | Model includes and the function that runs ngspice in a scratch folder |
 | `src/ota5t.py` | OTA netlist, metric extraction and `evaluate()` |
@@ -216,8 +272,7 @@ already exist or you intentionally want to regenerate the model.
 
 `data/` and `reports/` are generated and not tracked by git. The figures shown
 above are copied to `docs/` with `python run_all.py --docs`.
-Surrogate training is implemented; using it to optimize designs is still
-planned.
+Surrogate training and scenario-driven Bayesian optimization are implemented.
 
 ## Data and licensing
 

@@ -1,0 +1,36 @@
+# Edit or add scenarios, then select one with:
+# python3 optimize_ota.py --scenario minimize_power
+#
+# Constraints use the same units as data/ota5t_sobol.csv.
+scenarios:
+  minimize_power:
+    description: Minimize power while meeting all nominal performance and validity requirements.
+    objective: power_w
+    direction: minimize
+    constraints:
+      gain_db: {min: 45}
+      gbw_hz: {min: 20000000}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.25}
+
+  maximize_gbw:
+    description: Maximize GBW while meeting gain, phase-margin, and operating-validity requirements.
+    objective: gbw_hz
+    direction: maximize
+    constraints:
+      gain_db: {min: 45}
+      gbw_hz: {min: 20000000}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.25}
+  minimize_power_high_gbw:
+    description: Minimize power while meeting all nominal requirements and a 50 MHz GBW target.
+    objective: power_w
+    direction: minimize
+    constraints:
+      gain_db: {min: 45}
+      gbw_hz: {min: 20000000}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.25}
