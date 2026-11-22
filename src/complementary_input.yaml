@@ -1,0 +1,22 @@
+description: Provisional Figure 5 complementary-input folded-cascode summing stage.
+supply_v: 1.8
+input_common_mode:
+  min_v: 0.9
+  max_v: 0.9
+  step_v: 0.1
+output_bias_v: 0.9
+folding_devices:
+  width_um: 20
+  length_um: 0.15
+cascode_biases:
+  vb1_v: 0.80
+  vb2_v: 1.00
+  vb3_v: 0.65
+  m5_to_m3_current_ratio: 1.5
+  current_ratio_tolerance_fraction: 0.01
+parameters:
+  wn: {min: 7, max: 50}
+  ln: {min: 0.15, max: 2.0}
+  wp: {min: 7, max: 50}
+  lp: {min: 0.15, max: 2.0}
+  itail: {min: 1.0e-7, max: 1.0e-4}

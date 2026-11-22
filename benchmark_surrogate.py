@@ -19,38 +19,49 @@ import numpy as np
 import pandas as pd
 from scipy.stats import qmc
 
-from src.ota5t import evaluate
 from src.specs import LOAD_CAP, SAT_MARGIN, V_TAIL_MIN
-from sweep_ota import RANGES
+from src.topology import load_topology, topology_names
 
 ROOT = Path(__file__).resolve().parent
 METRICS = ("gain_db", "gbw_hz", "pm_deg")
 PREDICTION_TARGETS = (*METRICS, "sat_margin", "v_tail")
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--model", type=Path, default=ROOT / "data/ota5t_surrogate.joblib")
-parser.add_argument("--training-data", type=Path, default=ROOT / "data/ota5t_sobol.csv")
+parser.add_argument("--topology", choices=topology_names(), default="ota5t")
+parser.add_argument("--model", type=Path)
+parser.add_argument("--training-data", type=Path)
 parser.add_argument("--n", type=int, default=100, help="number of fresh configurations")
 parser.add_argument("--seed", type=int, default=123)
 parser.add_argument(
     "--output",
     type=Path,
-    default=ROOT / "reports/surrogate_benchmark.csv",
+    default=None,
     help="per-design benchmark results CSV",
 )
 parser.add_argument(
     "--summary",
     type=Path,
-    default=ROOT / "reports/surrogate_benchmark_summary.json",
+    default=None,
     help="aggregate results JSON",
 )
 parser.add_argument(
     "--html",
     type=Path,
-    default=ROOT / "reports/surrogate_benchmark.html",
+    default=None,
     help="HTML benchmark report",
 )
 args = parser.parse_args()
+topology = load_topology(args.topology)
+args.model = args.model or topology.MODEL_FILE
+args.training_data = args.training_data or topology.DATA_FILE
+suffix = "" if args.topology == "ota5t" else f"_{args.topology}"
+args.output = args.output or ROOT / f"reports/surrogate_benchmark{suffix}.csv"
+args.summary = args.summary or ROOT / f"reports/surrogate_benchmark_summary{suffix}.json"
+args.html = args.html or ROOT / f"reports/surrogate_benchmark{suffix}.html"
+evaluate = topology.evaluate
+RANGES = topology.RANGES
+if getattr(topology, "TRAIN_POWER", False):
+    PREDICTION_TARGETS = (*PREDICTION_TARGETS, "power_w")
 
 if args.n < 1:
     parser.error("--n must be at least 1")
@@ -69,6 +80,8 @@ training_x = training_df[features].dropna().to_numpy(dtype=float)
 model_load_started = time.perf_counter()
 saved = joblib.load(args.model)
 model_load_s = time.perf_counter() - model_load_started
+if saved.get("topology", "ota5t") != args.topology:
+    parser.error(f"model was trained for topology {saved.get('topology', 'ota5t')}")
 if saved.get("features") != features:
     parser.error(
         f"model features {saved.get('features')} do not match sweep features {features}"
@@ -165,6 +178,8 @@ for index, (_, design) in enumerate(designs.iterrows(), start=1):
         "sat_margin_surrogate": predicted["sat_margin"],
         "v_tail_spice": actual.get("v_tail", np.nan),
         "v_tail_surrogate": predicted["v_tail"],
+        "power_w_spice": actual.get("power_w", np.nan),
+        "power_w_surrogate": predicted.get("power_w", np.nan),
         "spice_time_s": spice_time_s,
         "surrogate_time_s": surrogate_time_s,
         "spice_error": spice_error,
@@ -232,6 +247,7 @@ false_invalid = int((actual_valid & ~predicted_valid).sum())
 false_valid = int((~actual_valid & predicted_valid).sum())
 true_invalid = int((~actual_valid & ~predicted_valid).sum())
 summary = {
+    "topology": args.topology,
     "requested_designs": args.n,
     "successful_ngspice_runs": len(successful),
     "failed_ngspice_runs": len(results) - len(successful),
@@ -272,6 +288,9 @@ summary = {
     },
     "metrics": {},
 }
+if hasattr(topology, "COMMON_MODE_RANGE_V"):
+    summary["common_mode_range_v"] = topology.COMMON_MODE_RANGE_V
+    summary["common_mode_points"] = topology.COMMON_MODE_POINTS
 for metric in METRICS:
     errors = valid_designs[f"{metric}_error_pct"].dropna()
     actual = valid_designs[f"{metric}_spice"]
@@ -360,9 +379,10 @@ a{{color:#0969da}}
 </style>
 </head>
 <body>
-<h1>Surrogate benchmark</h1>
+<h1>Surrogate benchmark: {escape(args.topology)}</h1>
 <p>Fresh designs compared against ngspice. Model: <code>{escape(str(args.model))}</code>;
 training data excluded during sampling: <code>{escape(str(args.training_data))}</code>.</p>
+{f"<p>Complementary-input performance and validity use the worst case over {topology.COMMON_MODE_POINTS} input common-mode points from {topology.COMMON_MODE_RANGE_V[0]:g} to {topology.COMMON_MODE_RANGE_V[1]:g} V.</p>" if hasattr(topology, "COMMON_MODE_RANGE_V") else ""}
 <p>Download the <a href="{escape(args.output.name)}">per-design CSV</a> or
 <a href="{escape(args.summary.name)}">summary JSON</a>.</p>
 <h2>Run summary</h2>

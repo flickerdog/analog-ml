@@ -70,6 +70,7 @@ def evaluate(w, l, vgs_target=0.6, vds=0.9):
 
 def simulate(netlist, outfile):
     """Run a netlist in a scratch folder; return (numbers in `outfile`, ngspice stdout)."""
+    outfiles = [outfile] if isinstance(outfile, str) else list(outfile)
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         (tmp / "circuit.cir").write_text(netlist)
@@ -80,4 +81,8 @@ def simulate(netlist, outfile):
         )
         if result.returncode != 0:
             raise RuntimeError(result.stdout + result.stderr)
-        return np.loadtxt(tmp / outfile), result.stdout
+        data = {
+            name: np.loadtxt(tmp / name)
+            for name in outfiles
+        }
+        return (data[outfile] if isinstance(outfile, str) else data), result.stdout

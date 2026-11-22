@@ -113,6 +113,25 @@ python run_all.py --sweep
 python run_all.py --surrogate
 ```
 
+### Complementary folded-cascode OTA
+
+The complementary-input topology uses the same nominal 1 pF load and can be
+run independently:
+
+```bash
+python run_all.py --topology complementary_input --surrogate
+python benchmark_surrogate.py --topology complementary_input --n 50 --seed 123
+python optimize_ota.py --topology complementary_input --scenario minimize_power \
+  --iterations 50 --initial-size 128 --seed 123
+```
+
+The complementary report names are topology-suffixed, for example
+`reports/surrogate_report_complementary_input.html`,
+`reports/surrogate_benchmark_complementary_input.html`, and
+`reports/optimization_minimize_power_50_seed123_comparison.html`. The
+complementary validity rule also requires M5/M3 and M6/M4 current ratios
+greater than 1.2.
+
 The surrogate command creates `reports/surrogate_report.html`, which you can
 open in a browser. It includes a metric table (average prediction errors and
 a simple baseline), plots comparing predictions with ngspice on held-out
@@ -150,22 +169,13 @@ flowchart LR
     G --> H["HTML report, plots,<br/>and prediction CSV"]
     C --> I["Refit five models<br/>on all available rows"]
     I --> J["Saved model for<br/>later design search"]
-    C --> K["Initialize BO Gaussian<br/>processes from sweep data"]
-    K --> L["Acquisition proposes<br/>candidate designs"]
-    L --> M["Evaluate candidate<br/>with ngspice"]
-    M --> K
-    J --> N["Rank candidate designs<br/>with saved surrogate"]
-    N --> O["Evaluate candidates<br/>with ngspice"]
 ```
 
 In the diagram, the held-out 20% (the default) is used only to evaluate
 predictions, not to fit those evaluated models. The final saved model is then
-retrained using the full dataset. Bayesian optimization is a separate
-Gaussian-process model initialized from known sweep simulations; it adds each
-new ngspice result as an observation. It does not retrain or overwrite the
-saved random-forest model. The test fraction and number of trees can be
-changed with `--test-size` and `--trees` when running
-`python train_surrogate.py --help`.
+retrained using the full dataset for later use in design search. The test
+fraction and number of trees can be changed with `--test-size` and `--trees`
+when running `python train_surrogate.py --help`.
 
 ### Benchmarking the saved model
 

@@ -1,13 +1,27 @@
-import re
+from pathlib import Path
 from string import Template
 
 import numpy as np
 
+from src.metrics import ac_metrics, parse_op
 from src.ngspice_backend import MODELS, simulate
 
 VDD = 1.8
 MARGIN = 0.05     # V of headroom above Vdsat
 TAIL_MIN = 0.15   # V a real tail current source would need
+TRAIN_POWER = False
+SURROGATE_TARGETS = ("gain_db", "gbw_hz", "pm_deg", "sat_margin", "v_tail")
+ROOT = Path(__file__).resolve().parent.parent
+DATA_FILE = ROOT / "data/ota5t_sobol.csv"
+MODEL_FILE = ROOT / "data/ota5t_surrogate.joblib"
+SCENARIO_FILE = ROOT / "optimization_scenarios.yaml"
+RANGES = {
+    "w1": (7, 50),
+    "l1": (0.15, 2.0),
+    "w3": (7, 50),
+    "l3": (0.15, 2.0),
+    "itail": (100e-9, 100e-6),
+}
 
 DEVICES = {"m1": "nfet", "m2": "nfet", "m3": "pfet", "m4": "pfet"}
 
@@ -52,28 +66,6 @@ quit
 """)
 
 
-def ac_metrics(freq, h):
-    """DC gain (dB), unity-gain frequency (Hz) and phase margin (deg) from H(f)."""
-    mag_db = 20 * np.log10(np.abs(h))
-    phase = np.degrees(np.unwrap(np.angle(h)))
-    logf = np.log10(freq)
-    dc_gain = mag_db[0]
-
-    below = np.where(mag_db < 0)[0]
-    if len(below) == 0 or below[0] == 0:
-        return dc_gain, np.nan, np.nan
-    i = below[0]
-    lf = np.interp(0.0, [mag_db[i], mag_db[i - 1]], [logf[i], logf[i - 1]])
-    ph = np.interp(lf, [logf[i - 1], logf[i]], [phase[i - 1], phase[i]])
-    return dc_gain, 10 ** lf, 180 + (ph - phase[0])
-
-
-def parse_op(stdout):
-    """Collect every 'name = value' line ngspice printed."""
-    return {m.group(1): float(m.group(2))
-            for m in re.finditer(r"^(\S+) = (\S+)$", stdout, re.MULTILINE)}
-
-
 def op_checks(op):
     """Smallest (|Vds| - |Vdsat|) over the four devices, and the tail voltage."""
     vn1, vout, vtail = op["v(n1)"], op["v(out)"], op["v(tail)"]
@@ -99,3 +91,6 @@ def evaluate(w1, l1, w3, l3, itail=20e-6, cl=1e-12):
         "valid": bool(sat_margin > MARGIN and v_tail > TAIL_MIN),
     }
 
+
+def power_estimate(parameters):
+    return VDD * parameters[..., list(RANGES).index("itail")]
