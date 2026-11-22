@@ -19,9 +19,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
 from src.specs import classify
+from src.topology import load_topology, topology_names
 
 ROOT = Path(__file__).resolve().parent
-FEATURES = ["w1", "l1", "w3", "l3", "itail"]
 TARGETS = {
     "gain_db": ("DC gain", "dB", "linear"),
     "gbw_hz": ("GBW", "MHz", "log10"),
@@ -29,16 +29,36 @@ TARGETS = {
     "sat_margin": ("Saturation margin", "mV", "linear"),
     "v_tail": ("Tail voltage", "mV", "linear"),
 }
+DISPLAY_SCALES = {
+    "gbw_hz": 1e-6,
+    "sat_margin": 1e3,
+    "v_tail": 1e3,
+    "power_w": 1e6,
+    "power_w": 1e6,
+}
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--data", type=Path, default=ROOT / "data/ota5t_sobol.csv")
-parser.add_argument("--metrics", type=Path, default=ROOT / "reports/surrogate_metrics.csv")
-parser.add_argument("--model", type=Path, default=ROOT / "data/ota5t_surrogate.joblib")
+parser.add_argument("--topology", choices=topology_names(), default="ota5t")
+parser.add_argument("--data", type=Path)
+parser.add_argument("--metrics", type=Path)
+parser.add_argument("--model", type=Path)
 parser.add_argument("--report-dir", type=Path, default=ROOT / "reports")
 parser.add_argument("--test-size", type=float, default=0.2)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--trees", type=int, default=300)
 args = parser.parse_args()
+topology = load_topology(args.topology)
+FEATURES = list(topology.RANGES)
+if getattr(topology, "TRAIN_POWER", False):
+    TARGETS["power_w"] = ("Power", "uW", "log10")
+args.data = args.data or topology.DATA_FILE
+args.model = args.model or topology.MODEL_FILE
+suffix = "" if args.topology == "ota5t" else f"_{args.topology}"
+args.metrics = args.metrics or ROOT / f"reports/surrogate_metrics{suffix}.csv"
+prediction_name = f"surrogate_test_predictions{suffix}.csv"
+actual_plot_name = f"surrogate_actual_vs_predicted{suffix}.png"
+error_plot_name = f"surrogate_prediction_errors{suffix}.png"
+report_name = f"surrogate_report{suffix}.html"
 
 if not 0 < args.test_size < 1:
     parser.error("--test-size must be between 0 and 1")
@@ -56,6 +76,9 @@ if missing:
 data = df[required].replace([np.inf, -np.inf], np.nan).dropna()
 if (data[FEATURES] <= 0).any().any():
     parser.error("all design input values must be positive for log-space training")
+for column, (_name, _unit, transform) in TARGETS.items():
+    if transform == "log10":
+        data = data[data[column] > 0]
 if len(data) < 10:
     parser.error(f"at least 10 complete simulation rows are required; found {len(data)}")
 
@@ -93,7 +116,7 @@ for column, (name, unit, transform) in TARGETS.items():
         prediction = 10**prediction
         baseline = 10**baseline_encoded
         actual = values[test_idx]
-        scale = 1e-6  # Report GBW in MHz.
+        scale = DISPLAY_SCALES.get(column, 1)
     else:
         baseline = baseline_encoded
         actual = values[test_idx]
@@ -139,9 +162,7 @@ metrics.to_csv(args.metrics, index=False)
 
 predictions = data.iloc[test_idx][FEATURES].copy().reset_index(drop=True)
 for column, (name, unit, transform) in TARGETS.items():
-    scale = 1e-6 if transform == "log10" else (
-        1e3 if column in {"sat_margin", "v_tail"} else 1
-    )
+    scale = DISPLAY_SCALES.get(column, 1)
     predictions[f"{column}_actual_{unit}"] = test_actuals[column] * scale
     predictions[f"{column}_predicted_{unit}"] = test_predictions[column] * scale
 predictions["class_actual"] = actual_class.to_numpy()
@@ -149,15 +170,13 @@ predictions["class_predicted"] = predicted_class.to_numpy()
 predictions["predicted_pass_but_failed"] = (
     (predicted_class == "passes") & (actual_class != "passes")
 ).to_numpy()
-predictions_path = args.report_dir / "surrogate_test_predictions.csv"
+predictions_path = args.report_dir / prediction_name
 predictions.to_csv(predictions_path, index=False)
 
 plt.rcParams.update({"font.size": 10, "axes.grid": True, "grid.alpha": 0.25})
 fig, axes = plt.subplots(2, 3, figsize=(14, 9))
 for ax, (column, (name, unit, transform)) in zip(axes.flat, TARGETS.items()):
-    scale = 1e-6 if transform == "log10" else (
-        1e3 if column in {"sat_margin", "v_tail"} else 1
-    )
+    scale = DISPLAY_SCALES.get(column, 1)
     actual = test_actuals[column] * scale
     predicted = test_predictions[column] * scale
     ax.scatter(actual, predicted, s=12, alpha=0.55, linewidths=0)
@@ -174,14 +193,15 @@ for ax, (column, (name, unit, transform)) in zip(axes.flat, TARGETS.items()):
 axes.flat[-1].axis("off")
 fig.suptitle("Held-out test set: predicted versus simulated values")
 fig.tight_layout()
-actual_plot = args.report_dir / "surrogate_actual_vs_predicted.png"
+actual_plot = args.report_dir / actual_plot_name
 fig.savefig(actual_plot, dpi=160)
 plt.close(fig)
 
 fig, axes = plt.subplots(2, 3, figsize=(14, 9))
 for ax, (column, (name, unit, transform)) in zip(axes.flat, TARGETS.items()):
     scale = 1e-6 if transform == "log10" else (
-        1e3 if column in {"sat_margin", "v_tail"} else 1
+        1e3 if column in {"sat_margin", "v_tail"} else
+        1e6 if column == "power_w" else 1
     )
     actual = test_actuals[column] * scale
     residual = (test_actuals[column] - test_predictions[column]) * scale
@@ -193,7 +213,7 @@ for ax, (column, (name, unit, transform)) in zip(axes.flat, TARGETS.items()):
 axes.flat[-1].axis("off")
 fig.suptitle("Held-out test set: prediction errors (zero is perfect)")
 fig.tight_layout()
-error_plot = args.report_dir / "surrogate_prediction_errors.png"
+error_plot = args.report_dir / error_plot_name
 fig.savefig(error_plot, dpi=160)
 plt.close(fig)
 
@@ -203,13 +223,15 @@ confusion = pd.DataFrame(
     columns=["Predicted passes", "Predicted does not pass"],
 )
 false_passes = predictions[predictions["predicted_pass_but_failed"]].copy()
+display_columns = list(FEATURES)
+for column, (_name, unit, _transform) in TARGETS.items():
+    display_columns.extend([
+        f"{column}_actual_{unit}",
+        f"{column}_predicted_{unit}",
+    ])
 display_columns = [
-    "w1", "l1", "w3", "l3", "itail",
-    "gain_db_actual_dB", "gain_db_predicted_dB",
-    "gbw_hz_actual_MHz", "gbw_hz_predicted_MHz",
-    "pm_deg_actual_degrees", "pm_deg_predicted_degrees",
-    "sat_margin_actual_mV", "sat_margin_predicted_mV",
-    "v_tail_actual_mV", "v_tail_predicted_mV",
+    column for column in display_columns
+    if column in false_passes.columns
 ]
 false_pass_html = (
     false_passes[display_columns].to_html(index=False, float_format=lambda x: f"{x:.4g}")
@@ -220,22 +242,21 @@ metrics_html = metrics.to_html(index=False, float_format=lambda x: f"{x:.4g}")
 confusion_html = confusion.to_html(float_format=lambda x: f"{x:.4g}")
 report = f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>OTA surrogate evaluation</title>
+<head><meta charset="utf-8"><title>{escape(args.topology)} OTA surrogate evaluation</title>
 <style>
 body{{font:16px sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;line-height:1.5}}
 table{{border-collapse:collapse;margin:1rem 0 2rem}}th,td{{border:1px solid #ccc;padding:.4rem .65rem}}
 th{{background:#f2f2f2}}img{{max-width:100%;height:auto}}.note{{background:#f6f8fa;padding:1rem}}
 </style></head>
 <body>
-<h1>OTA surrogate: held-out evaluation</h1>
+<h1>{escape(args.topology)} OTA surrogate: held-out evaluation</h1>
 <p>Data: <code>{escape(str(args.data))}</code>. Complete rows: {len(data)}.
 Training rows: {len(train_idx)}. Test rows not used for fitting: {len(test_idx)}.
 Seed: {args.seed}.</p>
 <h2>Training method</h2>
-<p>This script uses scikit-learn's <code>RandomForestRegressor</code>: five
-separate regressors predict gain, GBW, phase margin, saturation margin, and
-tail voltage. Each forest averages {args.trees} decision trees. Tree leaves
-predict from training examples in that region of input space. The five design
+<p>This script uses scikit-learn's <code>RandomForestRegressor</code>: {len(TARGETS)}
+separate regressors predict {", ".join(name for name, _unit, _transform in TARGETS.values())}. Each forest averages {args.trees} decision trees. Tree leaves
+predict from training examples in that region of input space. The {len(FEATURES)} design
 inputs are transformed with <code>log10</code>; GBW targets are also trained
 in <code>log10</code> space. The held-out split evaluates models trained on
 {len(train_idx)} rows. After evaluation, those models are independently
@@ -270,12 +291,13 @@ not pass when simulated in ngspice. Verify proposed designs with ngspice.</p>
 <p>All held-out predictions and design inputs are in
 <code>{predictions_path.name}</code>.</p>
 </body></html>"""
-report_path = args.report_dir / "surrogate_report.html"
+report_path = args.report_dir / report_name
 report_path.write_text(report, encoding="utf-8")
 
 args.model.parent.mkdir(parents=True, exist_ok=True)
 joblib.dump({
     "features": FEATURES,
+    "topology": args.topology,
     "targets": TARGETS,
     "models": models,
     "input_transform": "log10",

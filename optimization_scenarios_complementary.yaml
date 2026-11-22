@@ -1,0 +1,32 @@
+scenarios:
+  minimize_power:
+    description: Minimize complementary input-stage power while meeting specs over the full 0–1.8 V common-mode range.
+    objective: power_w
+    direction: minimize
+    constraints:
+      gain_db: {min: 35}
+      gbw_hz: {min: 1000000}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.15}
+
+  maximize_gbw:
+    description: Maximize worst-case GBW over the full input common-mode range.
+    objective: gbw_hz
+    direction: maximize
+    constraints:
+      gain_db: {min: 35}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.15}
+
+  minimize_power_gain40_gbw30:
+    description: Stricter complementary-input test targeting 40 dB gain and 30 MHz GBW.
+    objective: power_w
+    direction: minimize
+    constraints:
+      gain_db: {min: 40}
+      gbw_hz: {min: 30000000}
+      pm_deg: {min: 60}
+      sat_margin: {min: 0.05}
+      v_tail: {min: 0.15}

@@ -31,28 +31,32 @@ from gpytorch.mlls.sum_marginal_log_likelihood import SumMarginalLogLikelihood
 from scipy.spatial import cKDTree
 from scipy.stats import qmc
 
-from src.ota5t import VDD, evaluate
 from src.specs import LOAD_CAP
-from sweep_ota import RANGES
+from src.topology import load_topology, topology_names
 
 ROOT = Path(__file__).resolve().parent
-TRAINING_DATA = ROOT / "data/ota5t_sobol.csv"
-MODEL_PATH = ROOT / "data/ota5t_surrogate.joblib"
-SCENARIO_PATH = ROOT / "optimization_scenarios.yaml"
 TARGETS = ("power_w", "gain_db", "gbw_hz", "pm_deg", "sat_margin", "v_tail")
-SURROGATE_TARGETS = ("gain_db", "gbw_hz", "pm_deg", "sat_margin", "v_tail")
 
 parser = argparse.ArgumentParser(
     description="Compare saved-surrogate-guided optimization with GP Bayesian optimization."
 )
-parser.add_argument("--config", type=Path, default=SCENARIO_PATH)
+parser.add_argument("--topology", choices=topology_names(), default="ota5t")
+parser.add_argument("--config", type=Path)
 parser.add_argument("--scenario", default="minimize_power")
-parser.add_argument("--model", type=Path, default=MODEL_PATH)
+parser.add_argument("--model", type=Path)
 parser.add_argument("--iterations", type=int, default=200, help="ngspice evaluations per search method")
 parser.add_argument("--initial-size", type=int, default=128, help="existing sweep rows used to initialize each method")
 parser.add_argument("--seed", type=int, default=123)
 parser.add_argument("--output-dir", type=Path, default=ROOT / "reports")
 args = parser.parse_args()
+topology = load_topology(args.topology)
+RANGES = topology.RANGES
+VDD = topology.VDD
+evaluate = topology.evaluate
+SURROGATE_TARGETS = topology.SURROGATE_TARGETS
+TRAINING_DATA = topology.DATA_FILE
+args.model = args.model or topology.MODEL_FILE
+args.config = args.config or topology.SCENARIO_FILE
 
 if args.iterations < 1:
     parser.error("--iterations must be at least 1")
@@ -101,7 +105,9 @@ training = training.replace([np.inf, -np.inf], np.nan).dropna(subset=list(requir
 if len(training) < args.initial_size:
     parser.error(f"need {args.initial_size} complete sweep rows; found {len(training)}")
 if saved_model.get("features") != features:
-    parser.error("saved model features do not match sweep_ota.RANGES")
+    parser.error("saved model features do not match topology parameter ranges")
+if saved_model.get("topology", "ota5t") != args.topology:
+    parser.error(f"model was trained for topology {saved_model.get('topology', 'ota5t')}")
 if saved_model.get("input_transform") != "log10":
     parser.error("saved surrogate must use log10 input transformation")
 if any(name not in saved_model.get("models", {}) for name in SURROGATE_TARGETS):
@@ -223,11 +229,12 @@ def normalized_candidate_pool(sampler, seen_tree, training_tree, size=1024):
 def predict_surrogate(unit_x):
     log_x = lower_log + np.asarray(unit_x) * (upper_log - lower_log)
     model_x = log_x.reshape(-1, len(features))
-    result = {
-        "power_w": VDD * 10**log_x[:, features.index("itail")],
-    }
+    physical_x = 10**log_x
+    result = {"power_w": topology.power_estimate(physical_x)}
     transforms = saved_model.get("targets", {})
     for name in SURROGATE_TARGETS:
+        if name == "power_w" and name not in saved_model["models"]:
+            continue
         encoded = saved_model["models"][name].predict(model_x)
         transform = transforms.get(name, (None, None, "linear"))[2]
         result[name] = 10**encoded if transform == "log10" else encoded
@@ -376,6 +383,8 @@ gp_best = best_feasible(gp_records)
 rf_best = best_feasible(rf_records)
 initial_best = best_feasible(initial_records)
 scenario_stem = args.scenario.replace("/", "_")
+if args.topology != "ota5t":
+    scenario_stem = f"{args.topology}_{scenario_stem}"
 run_tag = f"{args.iterations}_seed{args.seed}"
 args.output_dir.mkdir(parents=True, exist_ok=True)
 trials_path = args.output_dir / f"optimization_{scenario_stem}_{run_tag}_trials.csv"
@@ -399,6 +408,7 @@ def report_row(best):
 
 summary = {
     "scenario": args.scenario,
+    "topology": args.topology,
     "description": scenario.get("description", ""),
     "objective": objective_name,
     "direction": direction,
@@ -419,12 +429,17 @@ summary = {
     "model": str(args.model),
     "training_data": str(TRAINING_DATA),
 }
+if hasattr(topology, "COMMON_MODE_RANGE_V"):
+    summary["common_mode_range_v"] = topology.COMMON_MODE_RANGE_V
+    summary["common_mode_points"] = topology.COMMON_MODE_POINTS
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 comparison = pd.DataFrame([
     {"method": "Existing shared initial sample", **(report_row(initial_best) or {})},
     {"method": "Saved surrogate guided (ngspice verified)", **(report_row(rf_best) or {})},
     {"method": "GP Bayesian optimization (ngspice verified)", **(report_row(gp_best) or {})},
 ])
+if "objective_value" not in comparison:
+    comparison["objective_value"] = np.nan
 comparison_display = comparison.copy()
 display_units = {
     "power_w": (1e6, "power (µW)"),
@@ -463,7 +478,15 @@ timing = {
         "mean_computation_per_evaluation_s": rf_compute_s / args.iterations,
     },
 }
+gp_total_s = timing["gp_bayesian_optimization"]["total_method_time_s"]
+rf_total_s = timing["saved_surrogate_search"]["total_method_time_s"]
+time_savings_factor = gp_total_s / rf_total_s if rf_total_s > 0 else float("inf")
 summary["timing_seconds"] = timing
+summary["saved_surrogate_time_savings_factor"] = float(time_savings_factor)
+summary["saved_surrogate_wall_time_reduction_percent"] = float(
+    100 * (gp_total_s - rf_total_s) / gp_total_s
+)
+summary["topology"] = args.topology
 summary["gp_fit_mean_s"] = float(np.mean(fit_times))
 summary["gp_acquisition_mean_s"] = float(np.mean(acquisition_times))
 summary["gp_wall_time_s"] = timing["gp_bayesian_optimization"]["total_method_time_s"]
@@ -484,6 +507,10 @@ timing_display = pd.DataFrame([
         "computation per evaluation (s)": timing["gp_bayesian_optimization"]["mean_computation_per_evaluation_s"],
     },
 ])
+timing_display["time savings factor (x)"] = [
+    time_savings_factor,
+    1.0,
+]
 
 fig, axes = plt.subplots(5, 2, figsize=(13, 22), squeeze=False)
 axes = axes.flat
@@ -639,12 +666,16 @@ img{{max-width:100%;height:auto}}</style></head>
 initial sweep observations. Every proposed candidate is checked with ngspice;
 the saved model is not retrained. The GP updates its own posterior after each
 ngspice result.</p>
+{f"<p>Each candidate is checked at {topology.COMMON_MODE_POINTS} input common-mode points from {topology.COMMON_MODE_RANGE_V[0]:g} to {topology.COMMON_MODE_RANGE_V[1]:g} V; reported performance and margins are worst-case across that range.</p>" if hasattr(topology, "COMMON_MODE_RANGE_V") else ""}
 <h2>Best feasible designs</h2>{comparison_display.to_html(index=False, border=0, escape=True)}
 <h2>Computational time by methodology</h2>
 <p>Optimization computation excludes ngspice simulation time; total method
 time adds that evaluation time. It excludes one-time model/data loading and
 report generation.</p>
 {timing_display.to_html(index=False, border=0, float_format=lambda value: f"{value:.3f}")}
+<p><strong>Saved-surrogate wall-time savings:</strong> {time_savings_factor:.2f}x faster
+({summary["saved_surrogate_wall_time_reduction_percent"]:.1f}% reduction versus GP)
+for this ngspice-verified search.</p>
 <h2>Passing and failing design spaces</h2>
 <p>Green points meet every scenario constraint in ngspice; red points fail at
 least one. Faint gray points show the existing sweep; colored symbols show

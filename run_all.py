@@ -14,8 +14,9 @@ import sys
 import time
 from pathlib import Path
 
+from src.topology import load_topology, topology_names
+
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data" / "ota5t_sobol.csv"
 
 parser = argparse.ArgumentParser(
     description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -23,10 +24,13 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--sweep", action="store_true", help="re-run the simulations first")
 parser.add_argument("--surrogate", action="store_true", help="also train the surrogate")
 parser.add_argument("--docs", action="store_true", help="copy the figures to docs/")
-args = parser.parse_args()
+parser.add_argument("--topology", choices=topology_names(), default="ota5t")
 
 if args.surrogate and not (ROOT / "train_surrogate.py").exists():
-    parser.error("cannot train surrogate: train_surrogate.py was not found")
+    parser.error("cannot tra
+    args = parser.parse_args()
+topology = load_topology(args.topology)
+DATA = topology.DATA_FILEin surrogate: train_surrogate.py was not found")
 
 if not DATA.exists() and not args.sweep:
     print(f"{DATA.relative_to(ROOT)} not found: running the sweep first.")
@@ -35,7 +39,8 @@ if not DATA.exists() and not args.sweep:
 steps = []
 if args.sweep:
     steps.append("sweep_ota.py")
-steps += ["plot_results.py", "report_sweep.py"]
+if args.topology == "ota5t":
+    steps += ["plot_results.py", "report_sweep.py"]
 if args.surrogate:
     steps.append("train_surrogate.py")
 
@@ -43,7 +48,10 @@ for step in steps:
     print(f"\n=== {step} ===", flush=True)
     t0 = time.perf_counter()
     # sys.executable = the Python running this script, so the venv is used everywhere
-    subprocess.run([sys.executable, step], cwd=ROOT, check=True)
+    command = [sys.executable, step]
+    if step in {"sweep_ota.py", "train_surrogate.py"}:
+        command.extend(["--topology", args.topology])
+    subprocess.run(command, cwd=ROOT, check=True)
     print(f"({time.perf_counter() - t0:.0f} s)")
 
 if args.docs:
